@@ -16,8 +16,8 @@ from crowdsafe.validation.emergence import (
     run_emergence_analysis,
 )
 from crowdsafe.validation.fundamental_diagram import (
-    greenshields_speed,
     run_fd_sweep,
+    weidmann_speed,
 )
 from crowdsafe.validation.report import run_validation_suite
 
@@ -26,18 +26,31 @@ from crowdsafe.validation.report import run_validation_suite
 # ---------------------------------------------------------------------------
 
 
-class TestGreenshieldsSpeed:
+class TestWeidmannSpeed:
     def test_free_flow(self) -> None:
-        assert greenshields_speed(0.0) == pytest.approx(1.34)
+        assert weidmann_speed(0.0) == pytest.approx(1.34)
 
     def test_jam(self) -> None:
-        assert greenshields_speed(6.0) == pytest.approx(0.0)
+        assert weidmann_speed(6.0) == pytest.approx(0.0)
 
-    def test_half_density(self) -> None:
-        assert greenshields_speed(3.0) == pytest.approx(1.34 / 2, rel=0.01)
+    def test_half_density_slower_than_linear(self) -> None:
+        # Weidmann is concave: v(rho_jam/2) < v_free/2
+        v_half = weidmann_speed(3.0)
+        assert 0.0 < v_half < 1.34 / 2, (
+            f"Weidmann at rho=3.0 should be less than linear half: got {v_half}"
+        )
 
     def test_over_jam(self) -> None:
-        assert greenshields_speed(8.0) == 0.0
+        assert weidmann_speed(8.0) == 0.0
+
+    def test_monotonically_decreasing(self) -> None:
+        densities = [0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 5.9]
+        speeds = [weidmann_speed(rho) for rho in densities]
+        for i in range(len(speeds) - 1):
+            assert speeds[i] > speeds[i + 1], (
+                f"Weidmann not monotonic: v({densities[i]})={speeds[i]:.3f} "
+                f">= v({densities[i+1]})={speeds[i+1]:.3f}"
+            )
 
 
 class TestFDSweep:

@@ -9,17 +9,17 @@ where
     v_i           -- instantaneous speed of pedestrian *i*  [m/s]
     v_mean        -- mean flow speed across the population [m/s]
     beta          -- exponent controlling nonlinearity (default 1.0)
-    rho(x_i)      -- local traffic density at pedestrian position [veh/km]
-    rho_0         -- reference density scale (``rho_scale``) [veh/km]
+    rho(x_i)      -- local crowd density at pedestrian position [pers/m²]
+    rho_0         -- reference density scale (``rho_scale``) [pers/m²]
 
 Classification thresholds (|m| compared to 0.1):
-    * m >  +0.1  ->  "slow"    (positive mass, attractor, congestion seed)
+    * m >  +0.1  ->  "slow"    (positive mass, attractor, herding seed)
     * m <  -0.1  ->  "fast"    (negative mass, repulsor, fluid zone)
     * |m| <= 0.1 ->  "neutral"
 
 Reference
 ---------
-Janus Civil C-01 CrowdSafe Technical Plan, Section 4.2.
+Janus Civil C-14 CrowdSafe Technical Plan, Section 1.2.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ class MassAssigner:
         Exponent applied to the absolute speed deviation.  ``beta = 1``
         gives a linear relationship; ``beta > 1`` amplifies large
         deviations; ``0 < beta < 1`` compresses them.
-    rho_scale : float, default 30.0
-        Reference density ``rho_0`` used for normalisation [veh/km].
+    rho_scale : float, default 2.0
+        Reference density ``rho_0`` used for normalisation [pers/m²].
         Must be strictly positive.
 
     Raises
@@ -53,7 +53,7 @@ class MassAssigner:
         If *beta* is negative or *rho_scale* is non-positive.
     """
 
-    def __init__(self, beta: float = 1.0, rho_scale: float = 30.0) -> None:
+    def __init__(self, beta: float = 1.0, rho_scale: float = 2.0) -> None:
         if beta < 0.0:
             raise ValueError(f"beta must be non-negative, got {beta}")
         if rho_scale <= 0.0:
@@ -79,7 +79,7 @@ class MassAssigner:
         v_mean : float
             Mean flow speed [m/s].
         local_densities : np.ndarray, shape (N,)
-            Local traffic density at each pedestrian position [veh/km].
+            Local crowd density at each pedestrian position [pers/m²].
 
         Returns
         -------

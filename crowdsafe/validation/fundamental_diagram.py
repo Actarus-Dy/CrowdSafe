@@ -1,26 +1,44 @@
-"""Fundamental Diagram validation -- Greenshields speed-density fit.
+"""Fundamental Diagram validation -- Weidmann speed-density fit.
 
-Runs a systematic density sweep on a 1-D highway and compares the
-emergent mean speed at each density against the Greenshields model:
+Runs a systematic density sweep in a corridor and compares the
+emergent mean speed at each density against the Weidmann (1993) model:
 
-    v(rho) = v_free * (1 - rho / rho_jam)
+    v(rho) = v_free * (1 - exp(-1.913 * (1/rho - 1/rho_jam)))
 
 Reports R², RMSE, and per-density data points for plotting.
 
+Reference: Weidmann, U. (1993). Transporttechnik der Fussgänger.
+
 Author: Agent #23 Scientific Validation Tester
-Date: 2026-03-23
+Date: 2026-03-28
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
 from crowdsafe.core.simulation import CrowdSimulation
 
 
+def weidmann_speed(rho: float, v_free: float = 1.34, rho_jam: float = 6.0) -> float:
+    """Theoretical Weidmann (1993) equilibrium walking speed.
+
+    v(rho) = v_free * (1 - exp(-1.913 * (1/rho - 1/rho_jam)))
+    """
+    if rho <= 0.01:
+        return v_free
+    if rho >= rho_jam:
+        return 0.0
+    exponent = -1.913 * (1.0 / rho - 1.0 / rho_jam)
+    return v_free * max(0.0, 1.0 - math.exp(exponent))
+
+
+# Backward compatibility alias
 def greenshields_speed(rho: float, v_free: float = 1.34, rho_jam: float = 6.0) -> float:
-    """Theoretical Weidmann equilibrium walking speed."""
-    return v_free * max(0.0, 1.0 - rho / rho_jam)
+    """Deprecated alias for weidmann_speed."""
+    return weidmann_speed(rho, v_free, rho_jam)
 
 
 def run_fd_sweep(
@@ -112,7 +130,7 @@ def run_fd_sweep(
             speed_samples.append(mean_spd)
 
         measured = float(np.mean(speed_samples))
-        theoretical = greenshields_speed(rho, v_free, rho_jam)
+        theoretical = weidmann_speed(rho, v_free, rho_jam)
 
         results.append(
             {

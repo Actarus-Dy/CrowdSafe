@@ -91,7 +91,7 @@ def leapfrog_step(
     next step without recomputation.
 
     The speed clipping step breaks strict symplecticity but is physically
-    necessary to enforce the traffic speed limit. In practice, clipping
+    necessary to enforce the pedestrian speed limit. In practice, clipping
     events are rare when the timestep is well-chosen via ``adaptive_dt``.
     """
     dt = float(dt)
@@ -164,7 +164,7 @@ def _clip_speed(
 def adaptive_dt(
     positions: npt.NDArray[np.float64],
     velocities: npt.NDArray[np.float64],
-    dt_max: float = 1.0,
+    dt_max: float = 0.3,
     dt_min: float = 0.05,
 ) -> float:
     """Compute an adaptive timestep based on the CFL condition.

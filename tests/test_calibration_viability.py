@@ -207,7 +207,7 @@ class TestCalibrationViabilityReport:
         results = calibration_viability_report()
         assert len(results) == 3
         captured = capsys.readouterr()
-        assert "GRAVTRAFFIC CALIBRATION VIABILITY REPORT" in captured.out
+        assert "CROWDSAFE CALIBRATION VIABILITY REPORT" in captured.out
 
     def test_results_sorted_by_r_squared_descending(self) -> None:
         """Results must be sorted best-first by R^2."""

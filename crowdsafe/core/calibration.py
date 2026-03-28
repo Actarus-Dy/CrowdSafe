@@ -310,7 +310,7 @@ def calibration_viability_report() -> list[dict]:
 
     # Print summary
     print("=" * 70)
-    print("GRAVTRAFFIC CALIBRATION VIABILITY REPORT")
+    print("CROWDSAFE CALIBRATION VIABILITY REPORT")
     print("=" * 70)
     print(f"{'Config':<12} {'G_s':>6} {'beta':>6} {'R^2':>10} {'RMSE (m/s)':>12}")
     print("-" * 70)

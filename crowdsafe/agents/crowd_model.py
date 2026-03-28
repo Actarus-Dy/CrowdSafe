@@ -198,7 +198,7 @@ class CrowdModel(mesa.Model):
         velocity : array_like, shape (2,)
             Initial velocity ``[vx, vy]`` in m/s.
         local_density : float, default 30.0
-            Local traffic density at the spawn point [veh/km].
+            Local crowd density at the spawn point [pers/m²].
 
         Returns
         -------

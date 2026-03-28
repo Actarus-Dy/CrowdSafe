@@ -52,7 +52,7 @@ class PedestrianAgent(mesa.Agent):
     velocity : array_like, shape (2,)
         Initial velocity ``[vx, vy]`` in m/s.
     local_density : float, default 30.0
-        Initial local traffic density at pedestrian position [veh/km].
+        Initial local crowd density at pedestrian position [pers/m²].
     v_max : float, default 36.0
         Maximum allowed speed for this pedestrian [m/s] (approx. 130 km/h).
     """

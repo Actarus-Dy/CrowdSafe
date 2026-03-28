@@ -129,11 +129,11 @@ async def dashboard():
 
 
 # ------------------------------------------------------------------
-# CORS -- configurable via GRAVTRAFFIC_CORS_ORIGINS env var
+# CORS -- configurable via CROWDSAFE_CORS_ORIGINS env var
 # Default: localhost only. Set to "*" for open access.
 # ------------------------------------------------------------------
 _cors_origins = os.environ.get(
-    "GRAVTRAFFIC_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+    "CROWDSAFE_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
 ).split(",")
 
 app.add_middleware(

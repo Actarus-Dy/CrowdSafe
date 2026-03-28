@@ -113,12 +113,12 @@ class CrowdSimulation:
         self.v_max: float = float(v_max)
         self.use_adaptive_dt: bool = adaptive_dt
 
-        # Drag enrichment parameters (Greenshields equilibrium speed model).
+        # Drag enrichment parameters (Weidmann equilibrium speed model).
         # When drag_coefficient > 0, an additional acceleration term is applied:
         #   a_drag_i = gamma * (v_eq(rho_i) - |v_i|) * direction_i
-        # where v_eq(rho) = v_free * max(0, 1 - rho / rho_jam).
-        # This represents engine thrust vs aerodynamic drag, NOT a car-following
-        # rule.  Gravity still provides inter-pedestrian interactions.
+        # where v_eq(rho) = v_free * (1 - exp(-1.913 * (1/rho - 1/rho_jam)))
+        # This represents self-propulsion vs crowd friction.  Gravity still
+        # provides inter-pedestrian social force interactions.
         self._drag_coefficient: float = float(drag_coefficient)
         self._v_free: float = float(v_free)
         self._rho_jam: float = float(rho_jam)
@@ -177,7 +177,7 @@ class CrowdSimulation:
         velocities : ndarray, shape (N, 2), dtype float64
             Initial (vx, vy) velocities of all pedestrians.
         local_densities : ndarray, shape (N,), dtype float64
-            Local traffic density at each pedestrian position [veh/km].
+            Local crowd density at each pedestrian position [pers/m²].
         """
         self.positions = np.asarray(positions, dtype=np.float64)
         self.velocities = np.asarray(velocities, dtype=np.float64)
@@ -335,7 +335,7 @@ class CrowdSimulation:
         velocities : array_like, shape (K, 2)
             Velocities of the new pedestrians.
         local_densities : array_like, shape (K,)
-            Local traffic density at each new pedestrian [veh/km].
+            Local crowd density at each new pedestrian [pers/m²].
 
         Returns
         -------
@@ -648,17 +648,21 @@ class CrowdSimulation:
         abs_masses = np.maximum(np.abs(masses), _MASS_FLOOR)  # (N,)
         accelerations = forces / abs_masses[:, np.newaxis]  # (N, 2)
 
-        # --- Drag enrichment (Greenshields equilibrium speed model) ---
-        # Physically motivated: engine thrust vs aerodynamic drag.
+        # --- Drag enrichment (Weidmann equilibrium speed model) ---
+        # Self-propulsion vs crowd friction.
         # a_drag_i = gamma * (v_eq(rho_i) - |v_i|) * direction_i
         # When |v_i| > v_eq: deceleration.  When |v_i| < v_eq: acceleration.
         if self._drag_coefficient > 0:
             speed = np.linalg.norm(velocities, axis=1, keepdims=True)  # (N, 1)
             speed_scalar = speed.ravel()  # (N,)
 
-            # Greenshields equilibrium speed from local density
+            # Weidmann (1993) equilibrium speed from local density
+            # v_eq(rho) = v_free * (1 - exp(-1.913 * (1/rho - 1/rho_jam)))
+            # At rho→0: v_eq→v_free.  At rho=rho_jam: v_eq→0.
+            rho_safe = np.maximum(self.local_densities, 0.01)  # avoid div/0
+            exponent = -1.913 * (1.0 / rho_safe - 1.0 / self._rho_jam)
             v_eq = self._v_free * np.maximum(
-                0.0, 1.0 - self.local_densities / self._rho_jam
+                0.0, 1.0 - np.exp(exponent)
             )  # (N,)
 
             # Unit direction vector (along current velocity); fallback to +x

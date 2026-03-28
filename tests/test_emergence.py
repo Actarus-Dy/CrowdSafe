@@ -1,11 +1,11 @@
 """Emergence validation test -- MILESTONE S6.
 
-Validates the core scientific claim of CrowdSafe (C-01):
-    "Spontaneous emergence of a stop-and-go shock wave on a simulated highway
+Validates the core scientific claim of CrowdSafe (C-14):
+    "Spontaneous emergence of crowd phenomena in a corridor
      without any explicit behavioral rule."
 
-The test injects ONE slow pedestrian into a uniform stream of 100 pedestrians on a
-straight 2000m highway.  The slow pedestrian acquires positive gravitational mass
+The test injects ONE slow pedestrian into a uniform stream of 100 pedestrians in a
+100m corridor.  The slow pedestrian acquires positive gravitational mass
 (attractor) from MassAssigner, which creates a gravitational well that
 decelerates upstream pedestrians purely through Newtonian gravitational dynamics.
 
@@ -35,12 +35,12 @@ from crowdsafe.core.simulation import CrowdSimulation
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-N_VEHICLES = 100
-HIGHWAY_LENGTH = 100.0  # meters (corridor)
+N_PEDESTRIANS = 100
+CORRIDOR_LENGTH = 100.0  # meters (corridor)
 INITIAL_SPEED = 1.2  # m/s (walking speed)
 SLOW_SPEED = 0.2  # m/s (near-stationary obstacle)
 SLOW_POSITION = 50.0  # meters (midpoint)
-SPACING = HIGHWAY_LENGTH / N_VEHICLES  # ~1 m
+SPACING = CORRIDOR_LENGTH / N_PEDESTRIANS  # ~1 m
 
 G_S = 2.0
 BETA = 1.0
@@ -57,7 +57,7 @@ SEED = 42
 # Fixtures
 # ---------------------------------------------------------------------------
 def _build_initial_state(
-    n_pedestrians: int = N_VEHICLES,
+    n_pedestrians: int = N_PEDESTRIANS,
     slow_position: float = SLOW_POSITION,
     slow_speed: float = SLOW_SPEED,
     initial_speed: float = INITIAL_SPEED,
@@ -76,7 +76,7 @@ def _build_initial_state(
     np.random.seed(SEED)
 
     # Uniformly spaced pedestrians along x-axis, y=0 (single lane)
-    x_positions = np.linspace(0, HIGHWAY_LENGTH - spacing, n_pedestrians)
+    x_positions = np.linspace(0, CORRIDOR_LENGTH - spacing, n_pedestrians)
     positions = np.zeros((n_pedestrians, 2), dtype=np.float64)
     positions[:, 0] = x_positions
 
@@ -88,10 +88,10 @@ def _build_initial_state(
     slow_idx = int(np.argmin(np.abs(x_positions - slow_position)))
     velocities[slow_idx, 0] = slow_speed
 
-    # Uniform local density: N_VEHICLES / HIGHWAY_LENGTH pers/m (1D approx)
+    # Uniform local density: N_PEDESTRIANS / CORRIDOR_LENGTH pers/m (1D approx)
     # then convert to ~pers/m² assuming 2m corridor width
     corridor_width = 2.0
-    density_pers_m2 = n_pedestrians / (HIGHWAY_LENGTH * corridor_width)
+    density_pers_m2 = n_pedestrians / (CORRIDOR_LENGTH * corridor_width)
     local_densities = np.full(n_pedestrians, density_pers_m2, dtype=np.float64)
 
     return positions, velocities, local_densities, slow_idx
@@ -377,7 +377,7 @@ class TestNoExplicitRules:
 
     def test_simulation_components_are_pure_physics(self) -> None:
         """Assert that CrowdSimulation contains only gravitational physics
-        modules and no behavioral traffic rules."""
+        modules and no behavioral rules."""
         sim = CrowdSimulation(G_s=G_S, beta=BETA, softening=SOFTENING, dt=DT, adaptive_dt=False)
 
         # Verify the simulation uses exactly the expected sub-modules
@@ -391,8 +391,8 @@ class TestNoExplicitRules:
             f"_force_engine {type(sim._force_engine)} missing compute_all method"
         )
 
-        # Verify ABSENCE of behavioral traffic model components.
-        # These are common in traditional traffic microsimulation but must
+        # Verify ABSENCE of behavioral model components.
+        # These are common in traditional microsimulation but must
         # NOT be present in CrowdSafe -- emergence comes from physics alone.
         behavioral_keywords = [
             "car_follow",
@@ -418,7 +418,7 @@ class TestNoExplicitRules:
             assert len(matches) == 0, (
                 f"Found behavioral rule attribute(s) matching '{keyword}': "
                 f"{matches}. CrowdSafe must achieve emergence from "
-                f"gravitational physics alone, without explicit traffic rules."
+                f"gravitational physics alone, without explicit rules."
             )
 
         print("\n--- Test 4: No Explicit Rules ---")
@@ -700,7 +700,7 @@ class TestDiagnosticSpeedProfile:
             # Print a compact summary: binned speed averages over 20m windows
             print(f"\n  {label}:")
             print(f"    {'x-range':>15s}  {'mean speed':>10s}  {'min speed':>10s}  {'n_ped':>5s}")
-            for bin_start in range(0, int(HIGHWAY_LENGTH) + 20, 20):
+            for bin_start in range(0, int(CORRIDOR_LENGTH) + 20, 20):
                 bin_end = bin_start + 20
                 bin_mask = (x_coords >= bin_start) & (x_coords < bin_end)
                 n_in_bin = np.sum(bin_mask)
