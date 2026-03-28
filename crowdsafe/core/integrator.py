@@ -47,7 +47,7 @@ def leapfrog_step(
     forces: npt.NDArray[np.float64],
     dt: float,
     force_fn: Callable[..., npt.NDArray[np.float64]],
-    v_max: npt.NDArray[np.float64] | float = 36.0,
+    v_max: npt.NDArray[np.float64] | float = 2.5,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Perform one leapfrog kick-drift-kick integration step.
 
@@ -68,10 +68,10 @@ def leapfrog_step(
         Function mapping (positions, velocities) -> accelerations, both
         (N, 2). Called once per step with the drifted positions and
         half-kick velocities to recompute accelerations.
-    v_max : float or ndarray of shape (N,), default 36.0
+    v_max : float or ndarray of shape (N,), default 2.5
         Maximum allowed speed magnitude per particle (m/s). Scalar
         applies the same limit to all particles. Array allows per-pedestrian
-        limits. Corresponds to ~130 km/h at default value.
+        limits. Default 2.5 m/s corresponds to fast running speed.
 
     Returns
     -------
@@ -164,8 +164,8 @@ def _clip_speed(
 def adaptive_dt(
     positions: npt.NDArray[np.float64],
     velocities: npt.NDArray[np.float64],
-    dt_max: float = 0.2,
-    dt_min: float = 0.01,
+    dt_max: float = 1.0,
+    dt_min: float = 0.05,
 ) -> float:
     """Compute an adaptive timestep based on the CFL condition.
 

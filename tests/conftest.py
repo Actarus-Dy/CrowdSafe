@@ -10,7 +10,7 @@ def rng():
 
 @pytest.fixture
 def sample_pedestrians(rng):
-    """100 pedestrians with random speeds and positions on a 1km segment."""
+    """100 pedestrians with random speeds and positions in a 50m x 50m venue."""
     n = 100
     dtype = np.dtype(
         [
@@ -23,10 +23,10 @@ def sample_pedestrians(rng):
         ]
     )
     pedestrians = np.zeros(n, dtype=dtype)
-    pedestrians["position_x"] = rng.uniform(0, 1000, n)
-    pedestrians["position_y"] = rng.uniform(-5, 5, n)  # 2 lanes ~10m wide
-    pedestrians["speed"] = rng.uniform(10, 40, n)  # 36-144 km/h
-    pedestrians["local_density"] = rng.uniform(10, 60, n)  # veh/km
-    pedestrians["v_max"] = 36.0  # 130 km/h
+    pedestrians["position_x"] = rng.uniform(0, 50, n)
+    pedestrians["position_y"] = rng.uniform(0, 50, n)
+    pedestrians["speed"] = rng.uniform(0.5, 1.8, n)  # walking speeds m/s
+    pedestrians["local_density"] = rng.uniform(0.5, 4.0, n)  # pers/m²
+    pedestrians["v_max"] = 2.5  # running speed m/s
     pedestrians["mass"] = 0.0  # to be assigned
     return pedestrians

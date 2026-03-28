@@ -18,21 +18,22 @@ import numpy as np
 from crowdsafe.core.simulation import CrowdSimulation
 
 
-def greenshields_speed(rho: float, v_free: float = 33.33, rho_jam: float = 150.0) -> float:
-    """Theoretical Greenshields equilibrium speed."""
+def greenshields_speed(rho: float, v_free: float = 1.34, rho_jam: float = 6.0) -> float:
+    """Theoretical Weidmann equilibrium walking speed."""
     return v_free * max(0.0, 1.0 - rho / rho_jam)
 
 
 def run_fd_sweep(
     densities: list[float] | None = None,
-    G_s: float = 5.0,
-    beta: float = 0.5,
-    gamma: float = 0.3,
-    v_free: float = 33.33,
-    rho_jam: float = 150.0,
-    highway_length: float = 2000.0,
-    n_steps: int = 800,
-    warmup_steps: int = 500,
+    G_s: float = 2.0,
+    beta: float = 1.0,
+    gamma: float = 0.5,
+    v_free: float = 1.34,
+    rho_jam: float = 6.0,
+    corridor_length: float = 50.0,
+    corridor_width: float = 4.0,
+    n_steps: int = 400,
+    warmup_steps: int = 200,
     seed: int = 42,
 ) -> dict:
     """Run a density sweep and measure emergent speed-density relationship.
@@ -40,7 +41,7 @@ def run_fd_sweep(
     Parameters
     ----------
     densities : list[float], optional
-        Densities in veh/km to test. Default: 10 to 140 in steps of 10.
+        Densities in pers/m² to test. Default: 0.5 to 5.0 in steps of 0.5.
     n_steps : int
         Total simulation steps per density point.
     warmup_steps : int
@@ -49,48 +50,53 @@ def run_fd_sweep(
     Returns
     -------
     dict with keys:
-        - densities: list[float] — tested densities [veh/km]
+        - densities: list[float] — tested densities [pers/m²]
         - measured_speeds: list[float] — mean speed at each density [m/s]
-        - theoretical_speeds: list[float] — Greenshields prediction [m/s]
+        - theoretical_speeds: list[float] — Weidmann prediction [m/s]
         - r_squared: float — R² goodness of fit
         - rmse: float — root mean squared error [m/s]
         - data_points: list[dict] — per-density detail
     """
     if densities is None:
-        densities = list(range(10, 141, 10))
+        densities = [0.5 * i for i in range(1, 11)]  # 0.5 to 5.0
 
     rng = np.random.default_rng(seed)
     results = []
 
     for rho in densities:
-        # Number of pedestrians from density and highway length
-        n_veh = max(2, int(rho * highway_length / 1000.0))
+        # Number of pedestrians from density and corridor area
+        area = corridor_length * corridor_width
+        n_ped = max(2, int(rho * area))
 
-        # Initial conditions: uniform spacing on 1-D highway
-        positions = np.zeros((n_veh, 2), dtype=np.float64)
-        positions[:, 0] = np.linspace(0, highway_length, n_veh, endpoint=False)
+        # Initial conditions: random positions in corridor
+        positions = np.zeros((n_ped, 2), dtype=np.float64)
+        positions[:, 0] = rng.uniform(0, corridor_length, n_ped)
+        positions[:, 1] = rng.uniform(0, corridor_width, n_ped)
 
         # Initial speed: v_free for ALL densities (NOT v_eq!) to avoid
         # circular validation. The model must converge to the correct
         # equilibrium from arbitrary initial conditions.
-        speeds = np.full(n_veh, v_free, dtype=np.float64)
-        speeds += rng.normal(0, 1.0, n_veh)  # small noise for symmetry breaking
-        speeds = np.clip(speeds, 0.5, v_free)
-        velocities = np.zeros((n_veh, 2), dtype=np.float64)
+        speeds = np.full(n_ped, v_free, dtype=np.float64)
+        speeds += rng.normal(0, 0.1, n_ped)  # small noise for symmetry breaking
+        speeds = np.clip(speeds, 0.1, v_free)
+        velocities = np.zeros((n_ped, 2), dtype=np.float64)
         velocities[:, 0] = speeds
 
-        local_densities = np.full(n_veh, float(rho), dtype=np.float64)
+        local_densities = np.full(n_ped, float(rho), dtype=np.float64)
 
+        # Use a large density_radius so computed densities approximate
+        # the uniform input density (avoids edge effects in small corridors)
         sim = CrowdSimulation(
             G_s=G_s,
             beta=beta,
-            softening=10.0,
-            dt=0.1,
-            v_max=v_free + 3.0,
+            softening=0.5,
+            dt=0.5,
+            v_max=v_free + 0.5,
             adaptive_dt=False,
             drag_coefficient=gamma,
             v_free=v_free,
             rho_jam=rho_jam,
+            density_radius=max(corridor_length, corridor_width),
             use_gpu=False,
         )
         sim.init_pedestrians(positions, velocities, local_densities)
@@ -111,7 +117,7 @@ def run_fd_sweep(
         results.append(
             {
                 "density": rho,
-                "n_pedestrians": n_veh,
+                "n_pedestrians": n_ped,
                 "measured_speed": measured,
                 "theoretical_speed": theoretical,
                 "speed_std": float(np.std(speed_samples)),

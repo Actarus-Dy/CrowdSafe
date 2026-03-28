@@ -48,28 +48,28 @@ class CrowdModel(mesa.Model):
         Road network providing topology, positions, and speed limits.
     n_pedestrians : int, default 100
         Number of pedestrian agents to spawn on the network.
-    G_s : float, default 5.0
-        Social gravitational constant (calibrated for unified parameters).
-    beta : float, default 0.5
-        Mass-assignment exponent (calibrated).
-    softening : float, default 10.0
-        Force softening length in metres.
+    G_s : float, default 2.0
+        Social gravitational constant (calibrated for crowd dynamics).
+    beta : float, default 1.0
+        Mass-assignment exponent (linear for pedestrians).
+    softening : float, default 0.5
+        Force softening length in metres (personal space radius).
     theta : float, default 0.5
         Barnes-Hut opening-angle parameter.
-    dt : float, default 0.1
+    dt : float, default 0.5
         Base integration timestep in seconds.
-    v_max : float, default 36.0
-        Maximum allowed pedestrian speed in m/s (~130 km/h).
+    v_max : float, default 2.5
+        Maximum pedestrian speed in m/s (running).
     signal_intersections : bool, default True
         If True, create IntersectionAgents at nodes with degree >= 3.
     seed : int, default 42
         Random seed for reproducibility.
-    drag_coefficient : float, default 0.3
-        Greenshields drag coefficient (gamma).
-    v_free : float, default 33.33
-        Free-flow speed in m/s (120 km/h).
-    rho_jam : float, default 150.0
-        Jam density in pedestrians/km.
+    drag_coefficient : float, default 0.5
+        Weidmann drag coefficient (gamma).
+    v_free : float, default 1.34
+        Free-flow walking speed in m/s (4.8 km/h, Weidmann).
+    rho_jam : float, default 6.0
+        Critical crowd density in pers/m² (Schwarzschild threshold).
 
     Attributes
     ----------
@@ -87,17 +87,17 @@ class CrowdModel(mesa.Model):
         self,
         network: RoadNetwork,
         n_pedestrians: int = 100,
-        G_s: float = 5.0,
-        beta: float = 0.5,
-        softening: float = 10.0,
+        G_s: float = 2.0,
+        beta: float = 1.0,
+        softening: float = 0.5,
         theta: float = 0.5,
-        dt: float = 0.1,
-        v_max: float = 36.0,
+        dt: float = 0.5,
+        v_max: float = 2.5,
         signal_intersections: bool = True,
         seed: int = 42,
-        drag_coefficient: float = 0.3,
-        v_free: float = 33.33,
-        rho_jam: float = 150.0,
+        drag_coefficient: float = 0.5,
+        v_free: float = 1.34,
+        rho_jam: float = 6.0,
     ) -> None:
         # Mesa 3.5+: use rng= to avoid FutureWarning on deprecated seed=
         super().__init__(rng=np.random.default_rng(seed))
@@ -129,7 +129,7 @@ class CrowdModel(mesa.Model):
 
         # Initial velocities: random speed along a random unit direction
         # (uniformly distributed on the circle, scaled by speed magnitude)
-        speeds = rng.uniform(10.0, 30.0, n_pedestrians)  # m/s
+        speeds = rng.uniform(0.8, 1.5, n_pedestrians)  # walking speed m/s
         angles = rng.uniform(0.0, 2.0 * np.pi, n_pedestrians)
         velocities = np.column_stack(
             [
@@ -138,8 +138,8 @@ class CrowdModel(mesa.Model):
             ]
         )
 
-        # Local densities: uniform initial estimate
-        densities = np.full(n_pedestrians, 30.0, dtype=np.float64)
+        # Local densities: uniform initial estimate [pers/m²]
+        densities = np.full(n_pedestrians, 1.5, dtype=np.float64)
 
         # Initialize the physics engine with pedestrian state
         self.simulation.init_pedestrians(positions, velocities, densities)

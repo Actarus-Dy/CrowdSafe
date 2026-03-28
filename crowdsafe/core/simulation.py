@@ -46,31 +46,33 @@ class CrowdSimulation:
 
     Parameters
     ----------
-    G_s : float, default 5.0
-        Social gravitational constant (calibrated for unified parameters).
-    beta : float, default 0.5
-        Mass-assignment exponent (calibrated value from viability test).
-    softening : float, default 10.0
-        Force softening length in meters.
-    rho_scale : float, default 30.0
-        Reference density for mass normalisation [veh/km].
+    G_s : float, default 2.0
+        Social gravitational constant (calibrated for crowd dynamics).
+    beta : float, default 1.0
+        Mass-assignment exponent (linear for pedestrians).
+    softening : float, default 0.5
+        Force softening length in meters (personal space radius).
+    rho_scale : float, default 2.0
+        Reference density for mass normalisation [pers/m²].
     theta : float, default 0.5
         Barnes-Hut opening-angle parameter.
-    dt : float, default 0.1
+    dt : float, default 0.5
         Base integration timestep in seconds.
-    v_max : float, default 36.0
-        Maximum allowed pedestrian speed in m/s (~130 km/h).
+    v_max : float, default 2.5
+        Maximum pedestrian speed in m/s (running).
     adaptive_dt : bool, default True
         If True, recompute the timestep after each step using the CFL
         condition.  Otherwise use the fixed ``dt``.
-    drag_coefficient : float, default 0.3
-        Greenshields drag coefficient (gamma). When > 0, adds a drag
+    drag_coefficient : float, default 0.5
+        Weidmann drag coefficient (gamma). When > 0, adds a drag
         enrichment term: ``a_drag = gamma * (v_eq(rho) - |v|) * direction``.
         Set to 0.0 for pure gravity (no drag).
-    v_free : float, default 33.33
-        Free-flow speed in m/s (120 km/h) for the Greenshields model.
-    rho_jam : float, default 150.0
-        Jam density in pedestrians/km for the Greenshields model.
+    v_free : float, default 1.34
+        Free-flow walking speed in m/s (4.8 km/h, Weidmann model).
+    rho_jam : float, default 6.0
+        Critical crowd density in pers/m² (Schwarzschild threshold).
+    density_radius : float, default 5.0
+        Neighborhood radius in meters for local density calculation.
     use_gpu : bool or None, default None
         If True, use CuPy GPU-accelerated force engine. If False, use CPU.
         If None (default), auto-detect: use GPU if CuPy is available.
@@ -84,24 +86,25 @@ class CrowdSimulation:
     masses : ndarray, shape (N,), dtype float64
         Most recently assigned gravitational masses.
     local_densities : ndarray, shape (N,), dtype float64
-        Local traffic density at each pedestrian [veh/km].
+        Local crowd density at each pedestrian [pers/m²].
     step_count : int
         Number of completed simulation steps.
     """
 
     def __init__(
         self,
-        G_s: float = 5.0,
-        beta: float = 0.5,
-        softening: float = 10.0,
-        rho_scale: float = 30.0,
+        G_s: float = 2.0,
+        beta: float = 1.0,
+        softening: float = 0.5,
+        rho_scale: float = 2.0,
         theta: float = 0.5,
-        dt: float = 0.1,
-        v_max: float = 36.0,
+        dt: float = 0.5,
+        v_max: float = 2.5,
         adaptive_dt: bool = True,
-        drag_coefficient: float = 0.3,
-        v_free: float = 33.33,
-        rho_jam: float = 150.0,
+        drag_coefficient: float = 0.5,
+        v_free: float = 1.34,
+        rho_jam: float = 6.0,
+        density_radius: float = 5.0,
         use_gpu: bool | None = None,
     ) -> None:
         self.G_s: float = float(G_s)
@@ -119,6 +122,7 @@ class CrowdSimulation:
         self._drag_coefficient: float = float(drag_coefficient)
         self._v_free: float = float(v_free)
         self._rho_jam: float = float(rho_jam)
+        self._density_radius: float = float(density_radius)
 
         # GPU auto-detection
         if use_gpu is None:
@@ -228,6 +232,7 @@ class CrowdSimulation:
             drag_coefficient=self._drag_coefficient,
             v_free=self._v_free,
             rho_jam=self._rho_jam,
+            density_radius=self._density_radius,
             use_gpu=self.use_gpu,
         )
         # Deep-copy all state arrays
@@ -527,42 +532,44 @@ class CrowdSimulation:
     # Internal helpers
     # ------------------------------------------------------------------
     def _compute_local_densities(
-        self, positions: np.ndarray, radius: float = 100.0
+        self, positions: np.ndarray, radius: float | None = None
     ) -> npt.NDArray[np.float64]:
-        """Compute local traffic density for each pedestrian.
+        """Compute local crowd density for each pedestrian.
 
         Counts pedestrians within a Euclidean radius and converts to
-        pedestrians/km.  Uses ``scipy.spatial.cKDTree`` for O(N log N)
-        vectorized neighbor counting.
+        pers/m² using circular area.  Uses ``scipy.spatial.cKDTree``
+        for O(N log N) vectorized neighbor counting.
 
         Parameters
         ----------
         positions : ndarray, shape (N, 2), dtype float64
             Current pedestrian positions.
-        radius : float, default 100.0
-            Neighborhood radius in meters for density calculation.
+        radius : float or None
+            Neighborhood radius in meters. If None, uses
+            ``self._density_radius`` (default 5.0 m).
 
         Returns
         -------
         densities : ndarray, shape (N,), dtype float64
-            Local traffic density at each pedestrian [veh/km].
+            Local crowd density at each pedestrian [pers/m²].
         """
         from scipy.spatial import cKDTree
 
+        if radius is None:
+            radius = self._density_radius
+
         n = len(positions)
         if n <= 1:
-            return np.full(n, 1.0 / (2 * radius / 1000), dtype=np.float64)
+            area = np.pi * radius**2
+            return np.full(n, 1.0 / area, dtype=np.float64)
 
         tree = cKDTree(positions)
-        # count_neighbors returns the number of points within radius
-        # (including self)
         counts = tree.query_ball_point(positions, r=radius, return_length=True)
         counts = np.asarray(counts, dtype=np.float64)
 
-        # Convert count in radius to pedestrians/km
-        # Window length = 2*radius (pedestrians can be on either side)
-        window_km = 2 * radius / 1000.0
-        densities = counts / window_km
+        # Convert count in radius to pers/m² (2D area-based density)
+        area = np.pi * radius**2
+        densities = counts / area
 
         return densities
 

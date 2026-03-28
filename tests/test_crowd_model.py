@@ -24,8 +24,8 @@ from crowdsafe.network.road_network import RoadNetwork
 
 @pytest.fixture
 def grid_network() -> RoadNetwork:
-    """A small 3x3 grid network (9 nodes, 12 edges)."""
-    return RoadNetwork.from_grid(3, 3)
+    """A small 3x3 grid network (9 nodes, 12 edges), pedestrian scale."""
+    return RoadNetwork.from_grid(3, 3, block_size=20.0)
 
 
 @pytest.fixture
@@ -34,12 +34,6 @@ def model(grid_network: RoadNetwork) -> CrowdModel:
     return CrowdModel(
         network=grid_network,
         n_pedestrians=30,
-        G_s=2.0,
-        beta=0.5,
-        softening=10.0,
-        theta=0.5,
-        dt=0.1,
-        v_max=36.0,
         signal_intersections=True,
         seed=42,
     )
@@ -185,9 +179,14 @@ class TestAgentUpdate:
 
     def test_mass_types_assigned(self, model: CrowdModel) -> None:
         model.step()
-        types = {a.mass_type for a in model.pedestrian_agents}
-        # With 30 pedestrians and random speeds, we expect at least 2 types
-        assert len(types) >= 2, f"Only mass types found: {types}"
+        masses = np.array([a.mass for a in model.pedestrian_agents])
+        # With 30 pedestrians and random speeds, masses should have both signs
+        has_positive = np.any(masses > 0)
+        has_negative = np.any(masses < 0)
+        assert has_positive and has_negative, (
+            f"Expected both positive and negative masses, got range "
+            f"[{masses.min():.6f}, {masses.max():.6f}]"
+        )
 
 
 # ======================================================================
