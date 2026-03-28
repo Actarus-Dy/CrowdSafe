@@ -151,17 +151,29 @@ class CrowdSimulation:
         else:
             self._force_engine = ForceEngine(G_s=G_s, softening=softening)
 
+        # Destination force relaxation time (Helbing 1995).
+        # F_dest = (v_desired - v_i) / tau
+        # where v_desired = v_free * desired_direction_i
+        self._tau: float = 0.5  # relaxation time [s]
+
         # State arrays -- set by init_pedestrians
         self.positions: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
         self.velocities: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
         self.local_densities: npt.NDArray[np.float64] = np.empty(0, dtype=np.float64)
         self.masses: npt.NDArray[np.float64] = np.empty(0, dtype=np.float64)
 
+        # Per-pedestrian desired direction (unit vector toward destination).
+        # Shape (N, 2). If None, no destination force is applied and
+        # the drag enrichment provides the baseline speed regulation.
+        self.desired_directions: npt.NDArray[np.float64] | None = None
+
         # Internal force cache (accelerations) for leapfrog continuity
         self._forces: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
 
-        # Static obstacles (e.g. red-light masses) -- participate in force
-        # computation but are NOT integrated.
+        # Static obstacles: walls and barriers.
+        # Convention: negative mass = repulsive wall (repels all pedestrians).
+        #             positive mass = attractive point (herding, curiosity).
+        # For walls/barriers, ALWAYS use negative masses.
         self._obstacle_positions: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
         self._obstacle_masses: npt.NDArray[np.float64] = np.empty(0, dtype=np.float64)
 
@@ -214,6 +226,30 @@ class CrowdSimulation:
         self._forces = self._compute_accelerations(self.positions)
         self.step_count = 0
 
+    def set_desired_directions(
+        self,
+        directions: np.ndarray,
+    ) -> None:
+        """Set per-pedestrian desired direction vectors.
+
+        When set, a destination force is applied at each step:
+            F_dest_i = (v_desired_i - v_i) / tau
+        where v_desired_i = v_free * directions[i].
+
+        Parameters
+        ----------
+        directions : ndarray, shape (N, 2), dtype float64
+            Unit direction vectors toward each pedestrian's destination.
+            Will be normalized to unit length.  Pass None to disable.
+        """
+        if directions is None:
+            self.desired_directions = None
+            return
+        directions = np.asarray(directions, dtype=np.float64)
+        norms = np.linalg.norm(directions, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-6)
+        self.desired_directions = directions / norms
+
     # ------------------------------------------------------------------
     # State cloning (for prediction without mutating the live sim)
     # ------------------------------------------------------------------
@@ -258,6 +294,8 @@ class CrowdSimulation:
         c._obstacle_masses = self._obstacle_masses.copy()
         c.step_count = self.step_count
         c._mean_speed = self._mean_speed
+        if self.desired_directions is not None:
+            c.desired_directions = self.desired_directions.copy()
         return c
 
     # ------------------------------------------------------------------
@@ -729,6 +767,14 @@ class CrowdSimulation:
         # This prevents interpenetration and models crush forces at high density.
         if self._contact_strength > 0 and n_pedestrians > 1:
             accelerations += self._compute_contact_forces(positions, abs_masses)
+
+        # --- Destination force (Helbing 1995 social force model) ---
+        # F_dest = (v_desired - v_i) / tau
+        # where v_desired = v_free * desired_direction_i
+        if self.desired_directions is not None and len(self.desired_directions) == n_pedestrians:
+            v_desired = self._v_free * self.desired_directions  # (N, 2)
+            accel_dest = (v_desired - velocities) / self._tau  # (N, 2)
+            accelerations += accel_dest
 
         # --- Drag enrichment (Weidmann equilibrium speed model) ---
         # Self-propulsion vs crowd friction.

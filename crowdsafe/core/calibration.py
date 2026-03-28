@@ -1,4 +1,10 @@
-"""Calibration viability module -- go/no-go gate for CrowdSafe (C-01).
+"""Calibration viability module -- LEGACY from GravTraffic (C-01).
+
+.. deprecated::
+    This module uses Greenshields (vehicular traffic) parameters and is
+    retained for scientific documentation of the GravTraffic validation path.
+    For CrowdSafe (C-14) crowd dynamics, use the Weidmann-based validation
+    in ``crowdsafe.validation.fundamental_diagram`` instead.
 
 This module generates synthetic highway data following Greenshields'
 fundamental diagram and tests whether the gravitational traffic model

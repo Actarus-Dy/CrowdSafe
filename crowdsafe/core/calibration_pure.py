@@ -1,6 +1,11 @@
-"""Pure-gravity calibration test -- can gravity alone reproduce a fundamental diagram?
+"""Pure-gravity calibration test -- LEGACY from GravTraffic (C-01).
 
-This module tests whether the gravitational traffic model WITHOUT any relaxation,
+.. deprecated::
+    This module uses vehicular traffic parameters (150 veh/km, 33.33 m/s,
+    2km highway). Retained for scientific documentation. For CrowdSafe (C-14),
+    use ``crowdsafe.validation.fundamental_diagram`` with Weidmann model.
+
+This module tests whether the gravitational model WITHOUT any relaxation,
 damping, or desired-speed term can reproduce a plausible speed-density relationship
 (fundamental diagram).
 

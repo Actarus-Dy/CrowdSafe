@@ -1,6 +1,11 @@
-"""Unified calibration -- find parameters satisfying BOTH calibration AND emergence.
+"""Unified calibration -- LEGACY from GravTraffic (C-01).
 
-This module searches for CrowdSafe parameters (G_s, beta, softening, gamma)
+.. deprecated::
+    This module uses vehicular traffic parameters (150 veh/km, Greenshields,
+    2km highway). Retained for scientific documentation. For CrowdSafe (C-14),
+    crowd-specific calibration will use Weidmann model with pers/m² densities.
+
+This module searches for parameters (G_s, beta, softening, gamma)
 that simultaneously:
 
   A. **Calibration**: Reproduce a Greenshields speed-density fundamental diagram

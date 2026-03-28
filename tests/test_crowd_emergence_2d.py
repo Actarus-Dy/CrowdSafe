@@ -244,3 +244,102 @@ class TestSpeedDensityQualitative:
             f"Speed at low density ({speeds_by_density[1.0]:.3f}) should "
             f"exceed speed at high density ({speeds_by_density[4.0]:.3f})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Destination force drives pedestrians toward exits
+# ---------------------------------------------------------------------------
+class TestDestinationForce:
+    """Pedestrians with desired directions should converge toward their
+    destinations via the Helbing (1995) social force term."""
+
+    def test_pedestrians_move_toward_destination(self) -> None:
+        """Stationary pedestrians with a desired direction should accelerate
+        in that direction."""
+        n = 20
+        rng = np.random.default_rng(42)
+        positions = np.column_stack([
+            rng.uniform(0, 20, n),
+            rng.uniform(0, 20, n),
+        ])
+        velocities = np.zeros((n, 2), dtype=np.float64)  # all stationary
+        densities = np.full(n, 1.0, dtype=np.float64)
+
+        sim = CrowdSimulation(dt=0.1, adaptive_dt=False, drag_coefficient=0.0)
+        sim.init_pedestrians(positions, velocities, densities)
+
+        # All pedestrians want to go +x (toward exit on right)
+        directions = np.zeros((n, 2), dtype=np.float64)
+        directions[:, 0] = 1.0
+        sim.set_desired_directions(directions)
+
+        sim.run(20)
+
+        # All pedestrians should now be moving primarily in +x
+        mean_vx = float(np.mean(sim.velocities[:, 0]))
+
+        print(f"\n--- Destination Force Test ---")
+        print(f"  Mean vx after 20 steps: {mean_vx:.3f} m/s")
+        print(f"  Expected: positive (toward +x exit)")
+
+        assert mean_vx > 0.3, (
+            f"Destination force too weak: mean_vx={mean_vx:.3f}, expected > 0.3 m/s"
+        )
+
+    def test_destination_overrides_initial_direction(self) -> None:
+        """Pedestrians moving -x but with desired direction +x should
+        eventually reverse course."""
+        n = 10
+        positions = np.column_stack([
+            np.linspace(5, 15, n),
+            np.full(n, 5.0),
+        ])
+        velocities = np.zeros((n, 2), dtype=np.float64)
+        velocities[:, 0] = -1.0  # initially moving left
+
+        densities = np.full(n, 1.0, dtype=np.float64)
+
+        sim = CrowdSimulation(dt=0.1, adaptive_dt=False, drag_coefficient=0.0)
+        sim.init_pedestrians(positions, velocities, densities)
+
+        # Desired direction: +x (opposite to initial velocity)
+        directions = np.zeros((n, 2), dtype=np.float64)
+        directions[:, 0] = 1.0
+        sim.set_desired_directions(directions)
+
+        sim.run(50)
+
+        mean_vx = float(np.mean(sim.velocities[:, 0]))
+
+        print(f"\n--- Direction Reversal Test ---")
+        print(f"  Initial vx: -1.0 m/s")
+        print(f"  Mean vx after 50 steps: {mean_vx:.3f} m/s")
+
+        assert mean_vx > 0, (
+            f"Pedestrians did not reverse toward destination: "
+            f"mean_vx={mean_vx:.3f}, expected positive"
+        )
+
+    def test_no_destination_no_effect(self) -> None:
+        """Without set_desired_directions, no destination force is applied."""
+        n = 10
+        positions = np.column_stack([np.linspace(0, 10, n), np.zeros(n)])
+        velocities = np.column_stack([np.full(n, 1.0), np.zeros(n)])
+        densities = np.full(n, 1.0, dtype=np.float64)
+
+        # Without destination
+        sim_no_dest = CrowdSimulation(dt=0.1, adaptive_dt=False, drag_coefficient=0.0)
+        sim_no_dest.init_pedestrians(positions.copy(), velocities.copy(), densities.copy())
+        sim_no_dest.step()
+        v_no_dest = sim_no_dest.velocities.copy()
+
+        # With None destination (explicit)
+        sim_none = CrowdSimulation(dt=0.1, adaptive_dt=False, drag_coefficient=0.0)
+        sim_none.init_pedestrians(positions.copy(), velocities.copy(), densities.copy())
+        sim_none.set_desired_directions(None)
+        sim_none.step()
+        v_none = sim_none.velocities.copy()
+
+        np.testing.assert_allclose(v_no_dest, v_none, atol=1e-14,
+            err_msg="Setting desired_directions=None should have no effect"
+        )
