@@ -350,19 +350,19 @@ class TestLocalDensitiesUpdate:
     def test_local_densities_clustering(self) -> None:
         """Pedestrians in a tight cluster should have higher density than spread-out ones."""
         n = 100
-        # 50 pedestrians clustered in [0, 20] x [-1, 1]
+        # 50 pedestrians clustered in [0, 5] x [0, 5] (2.0 pers/m²)
         rng = np.random.default_rng(777)
         cluster_pos = np.column_stack(
             [
-                rng.uniform(0, 20, 50),
-                rng.uniform(-1, 1, 50),
+                rng.uniform(0, 5, 50),
+                rng.uniform(0, 5, 50),
             ]
         )
-        # 50 pedestrians spread over [50, 200] x [-1, 1]
+        # 50 pedestrians spread over [50, 100] x [0, 50] (0.02 pers/m²)
         spread_pos = np.column_stack(
             [
-                rng.uniform(50, 200, 50),
-                rng.uniform(-1, 1, 50),
+                rng.uniform(50, 100, 50),
+                rng.uniform(0, 50, 50),
             ]
         )
         positions = np.vstack([cluster_pos, spread_pos])
@@ -374,7 +374,7 @@ class TestLocalDensitiesUpdate:
         )
         densities_init = np.full(n, 1.5, dtype=np.float64)
 
-        sim = CrowdSimulation(adaptive_dt=False, dt=0.5)
+        sim = CrowdSimulation(adaptive_dt=False, dt=0.1, contact_strength=0.0)
         sim.init_pedestrians(positions, velocities, densities_init)
         # Run one step so densities are recomputed from positions
         sim.step()

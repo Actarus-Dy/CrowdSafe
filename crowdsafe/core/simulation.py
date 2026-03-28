@@ -105,6 +105,9 @@ class CrowdSimulation:
         v_free: float = 1.34,
         rho_jam: float = 6.0,
         density_radius: float = 5.0,
+        body_radius: float = 0.2,
+        contact_strength: float = 2000.0,
+        contact_range: float = 0.08,
         use_gpu: bool | None = None,
     ) -> None:
         self.G_s: float = float(G_s)
@@ -123,6 +126,13 @@ class CrowdSimulation:
         self._v_free: float = float(v_free)
         self._rho_jam: float = float(rho_jam)
         self._density_radius: float = float(density_radius)
+
+        # Body contact force parameters (Helbing et al. 2000).
+        # Exponential repulsion at close range: F = A * exp((2*r - d) / B) * n_ij
+        # where r = body_radius, d = center-to-center distance, B = contact_range.
+        self._body_radius: float = float(body_radius)
+        self._contact_strength: float = float(contact_strength)
+        self._contact_range: float = float(contact_range)
 
         # GPU auto-detection
         if use_gpu is None:
@@ -233,6 +243,9 @@ class CrowdSimulation:
             v_free=self._v_free,
             rho_jam=self._rho_jam,
             density_radius=self._density_radius,
+            body_radius=self._body_radius,
+            contact_strength=self._contact_strength,
+            contact_range=self._contact_range,
             use_gpu=self.use_gpu,
         )
         # Deep-copy all state arrays
@@ -573,6 +586,68 @@ class CrowdSimulation:
 
         return densities
 
+    def _compute_contact_forces(
+        self,
+        positions: npt.NDArray[np.float64],
+        abs_masses: npt.NDArray[np.float64],
+    ) -> npt.NDArray[np.float64]:
+        """Compute short-range body contact forces (Helbing et al. 2000).
+
+        Exponential repulsion when center-to-center distance d < 2*body_radius:
+            F = A * exp((2r - d) / B) * unit_normal_away
+
+        Uses cKDTree for O(N log N) neighbor search within contact range.
+
+        Returns accelerations (N, 2), not forces.
+        """
+        from scipy.spatial import cKDTree
+
+        n = len(positions)
+        contact_accel = np.zeros((n, 2), dtype=np.float64)
+
+        # Only check pairs within interaction range (2*body_radius + 3*contact_range)
+        cutoff = 2 * self._body_radius + 3 * self._contact_range
+        tree = cKDTree(positions)
+        pairs = tree.query_pairs(r=cutoff, output_type="ndarray")
+
+        if len(pairs) == 0:
+            return contact_accel
+
+        idx_i = pairs[:, 0]
+        idx_j = pairs[:, 1]
+        dx = positions[idx_j] - positions[idx_i]  # (P, 2)
+        dist = np.linalg.norm(dx, axis=1)  # (P,)
+        dist_safe = np.maximum(dist, 1e-6)
+
+        # Overlap: 2*r - d (positive when bodies overlap)
+        overlap = 2 * self._body_radius - dist  # (P,)
+
+        # Only compute force where there is overlap or near-overlap
+        active = overlap > -3 * self._contact_range
+        if not np.any(active):
+            return contact_accel
+
+        # Force magnitude: A * exp(overlap / B)
+        force_mag = self._contact_strength * np.exp(
+            np.clip(overlap[active] / self._contact_range, -10, 10)
+        )
+
+        # Unit normal from j to i (repulsion pushes i away from j)
+        normal = -dx[active] / dist_safe[active, np.newaxis]  # (A, 2)
+        force_vec = force_mag[:, np.newaxis] * normal  # (A, 2)
+
+        # Convert to acceleration: a = F / m
+        ai = idx_i[active]
+        aj = idx_j[active]
+        accel_i = force_vec / abs_masses[ai, np.newaxis]
+        accel_j = -force_vec / abs_masses[aj, np.newaxis]
+
+        # Accumulate (Newton's 3rd law)
+        np.add.at(contact_accel, ai, accel_i)
+        np.add.at(contact_accel, aj, accel_j)
+
+        return contact_accel
+
     def _speeds(self) -> npt.NDArray[np.float64]:
         """Return speed magnitudes for all pedestrians.  Shape (N,)."""
         return np.linalg.norm(self.velocities, axis=1)
@@ -647,6 +722,13 @@ class CrowdSimulation:
         # division by zero for near-zero mass particles.
         abs_masses = np.maximum(np.abs(masses), _MASS_FLOOR)  # (N,)
         accelerations = forces / abs_masses[:, np.newaxis]  # (N, 2)
+
+        # --- Body contact forces (Helbing et al. 2000) ---
+        # Exponential repulsion when pedestrians overlap (d < 2*body_radius).
+        # F_contact = A * exp((2r - d) / B) * unit_normal
+        # This prevents interpenetration and models crush forces at high density.
+        if self._contact_strength > 0 and n_pedestrians > 1:
+            accelerations += self._compute_contact_forces(positions, abs_masses)
 
         # --- Drag enrichment (Weidmann equilibrium speed model) ---
         # Self-propulsion vs crowd friction.
