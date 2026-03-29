@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
+from crowdsafe.core.critical_density import AlertLevel, CriticalDensityMonitor
 from crowdsafe.core.force_engine import ForceEngine
 from crowdsafe.core.force_engine_gpu import GPU_AVAILABLE, ForceEngineGPU
 from crowdsafe.core.force_engine_numba import (
@@ -588,6 +589,117 @@ class CrowdSimulation:
             "dt_used": dt,
             "step_count": self.step_count,
         }
+
+    # ------------------------------------------------------------------
+    # Safety monitoring (TOV + Geodesics + Critical Density)
+    # ------------------------------------------------------------------
+    def check_safety(
+        self,
+        corridor_axis: int = 0,
+        corridor_width: float = 4.0,
+        exits: list | None = None,
+        density_grid_shape: tuple[int, int] | None = None,
+        dx_m: float = 0.5,
+    ) -> dict:
+        """Run a comprehensive safety check on the current simulation state.
+
+        Integrates TOV pressure, critical density, and evacuation geodesics
+        into a single safety report.
+
+        Parameters
+        ----------
+        corridor_axis : int, default 0
+            Axis along which to compute TOV pressure (0=x, 1=y).
+        corridor_width : float, default 4.0
+            Width of corridor for TOV computation [m].
+        exits : list of ndarray, optional
+            Exit positions for geodesic computation. If None, geodesics
+            are skipped.
+        density_grid_shape : tuple (ny, nx), optional
+            Grid shape for geodesic density map. If None, auto-computed.
+        dx_m : float, default 0.5
+            Grid cell size for geodesic computation [m].
+
+        Returns
+        -------
+        dict with keys:
+            - 'density_alert': AlertLevel (highest density alert)
+            - 'max_density': float (peak local density)
+            - 'tov_profile': PressureProfile (corridor force profile)
+            - 'tov_alert': str ('VERT', 'ORANGE', 'ROUGE')
+            - 'evacuation': EvacuationResult or None (if exits provided)
+            - 'overall_alert': str (worst alert across all checks)
+        """
+        from crowdsafe.core.tov_pressure import TOVPressure
+
+        result: dict = {}
+
+        # 1. Critical density check
+        monitor = CriticalDensityMonitor()
+        density_alert = monitor.check_point_densities(self.local_densities)
+        result["density_alert"] = density_alert
+        result["max_density"] = float(np.max(self.local_densities)) \
+            if len(self.local_densities) > 0 else 0.0
+
+        # 2. TOV pressure profile
+        tov = TOVPressure()
+        tov_profile = tov.compute_from_simulation(
+            self.positions,
+            corridor_axis=corridor_axis,
+            corridor_width=corridor_width,
+        )
+        result["tov_profile"] = tov_profile
+        result["tov_alert"] = tov_profile.alert_level
+
+        # 3. Evacuation geodesics (optional)
+        if exits is not None and len(exits) > 0:
+            from crowdsafe.core.evacuation_geodesic import EvacuationGeodesic
+
+            geo = EvacuationGeodesic(v_max=self._v_free, dx_m=dx_m)
+
+            # Build density grid from positions
+            if density_grid_shape is None:
+                x_range = float(np.ptp(self.positions[:, 0])) + 2 * dx_m
+                y_range = float(np.ptp(self.positions[:, 1])) + 2 * dx_m
+                nx_grid = max(10, int(x_range / dx_m))
+                ny_grid = max(10, int(y_range / dx_m))
+            else:
+                ny_grid, nx_grid = density_grid_shape
+
+            x_min = float(np.min(self.positions[:, 0])) - dx_m
+            y_min = float(np.min(self.positions[:, 1])) - dx_m
+
+            density_grid = np.zeros((ny_grid, nx_grid), dtype=np.float64)
+            for pos in self.positions:
+                ix = min(max(round((pos[0] - x_min) / dx_m), 0), nx_grid - 1)
+                iy = min(max(round((pos[1] - y_min) / dx_m), 0), ny_grid - 1)
+                density_grid[iy, ix] += 1.0 / (dx_m * dx_m)
+
+            # Adjust exit coordinates relative to grid origin
+            adjusted_exits = [
+                np.array([ex[0] - x_min, ex[1] - y_min]) for ex in exits
+            ]
+
+            # Compute distance map from exits
+            dist_map = geo.compute_distance_map(density_grid, adjusted_exits)
+            result["evacuation_distance_map"] = dist_map
+            result["evacuation_max_time"] = float(np.min([
+                dist_map[
+                    min(max(round((pos[1] - y_min) / dx_m), 0), ny_grid - 1),
+                    min(max(round((pos[0] - x_min) / dx_m), 0), nx_grid - 1),
+                ]
+                for pos in self.positions
+            ])) if len(self.positions) > 0 else 0.0
+        else:
+            result["evacuation_distance_map"] = None
+            result["evacuation_max_time"] = None
+
+        # 4. Overall alert (worst of all checks)
+        alerts = [density_alert.value, tov_profile.alert_level]
+        alert_order = {"VERT": 0, "JAUNE": 1, "ORANGE": 2, "ROUGE": 3, "CRITIQUE": 4}
+        result["overall_alert"] = max(alerts, key=lambda a: alert_order.get(a, 0))
+
+        return result
 
     # ------------------------------------------------------------------
     # Multi-step runner
