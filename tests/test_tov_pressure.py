@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 from crowdsafe.core.tov_pressure import (
-    DANGER_PRESSURE,
-    WARNING_PRESSURE,
+    DANGER_FORCE,
+    WARNING_FORCE,
     TOVPressure,
 )
 
@@ -24,20 +24,26 @@ class TestTOVBasic:
         l = np.linspace(0, 10, 20)
         rho = np.zeros(20)
         result = tov.compute(l, rho, width_m=2.0)
-        assert result.P_max == pytest.approx(0.0)
+        assert result.F_max == pytest.approx(0.0)
         assert result.alert_level == "VERT"
 
-    def test_uniform_density_linear_pressure(self) -> None:
-        """Uniform density produces linearly increasing pressure."""
-        tov = TOVPressure()
-        l = np.linspace(0, 10, 100)
-        rho = np.full(100, 3.0)  # 3 pers/m²
-        result = tov.compute(l, rho, width_m=2.0)
+    def test_uniform_density_analytical(self) -> None:
+        """Uniform density: F(L) = rho * F_contact * width * L exactly."""
+        tov = TOVPressure(F_contact=100.0)
+        L = 10.0
+        l = np.linspace(0, L, 1000)  # fine grid for accuracy
+        rho_val = 3.0
+        width = 2.0
+        rho = np.full(len(l), rho_val)
+        result = tov.compute(l, rho, width_m=width)
 
-        # P = integral(rho * F_contact * width) = 3 * 100 * 2 * 10 = 6000
-        assert result.P_max > 0
-        # Pressure should increase monotonically
-        assert result.pressure_N_m[-1] > result.pressure_N_m[0]
+        # Analytical: F(L) = rho * F_contact * width * L = 3 * 100 * 2 * 10 = 6000
+        expected = rho_val * 100.0 * width * L
+        assert result.F_max == pytest.approx(expected, rel=0.01), (
+            f"F_max={result.F_max:.1f}, expected={expected:.1f}"
+        )
+        # Force should increase monotonically
+        assert result.cumulative_force_N[-1] > result.cumulative_force_N[0]
 
     def test_pressure_shape_matches_input(self) -> None:
         tov = TOVPressure()
@@ -45,7 +51,7 @@ class TestTOVBasic:
         rho = np.ones(50)
         result = tov.compute(l, rho, width_m=3.0)
         assert result.l_m.shape == (50,)
-        assert result.pressure_N_m.shape == (50,)
+        assert result.cumulative_force_N.shape == (50,)
 
 
 class TestTOVAlerts:
@@ -64,9 +70,9 @@ class TestTOVAlerts:
         rho = np.full(100, 4.0)  # moderate density
         result = tov.compute(l, rho, width_m=2.0)
         # P_max = 4 * 100 * 2 * 20 = 16000 > 4450
-        if result.P_max > DANGER_PRESSURE:
+        if result.F_max > DANGER_FORCE:
             assert result.alert_level == "ROUGE"
-        elif result.P_max > WARNING_PRESSURE:
+        elif result.F_max > WARNING_FORCE:
             assert result.alert_level == "ORANGE"
 
     def test_crush_density_rouge(self) -> None:
@@ -83,7 +89,7 @@ class TestTOVAlerts:
         rho = np.full(50, 3.0)
         result = tov.compute(l, rho, width_m=2.0)
         assert result.schwarzschild_ratio == pytest.approx(
-            result.P_max / DANGER_PRESSURE
+            result.F_max / DANGER_FORCE
         )
 
 
@@ -101,7 +107,7 @@ class TestTOVFromSimulation:
         result = tov.compute_from_simulation(
             positions, corridor_axis=0, corridor_width=4.0
         )
-        assert result.P_max > 0
+        assert result.F_max > 0
         assert len(result.l_m) > 0
         assert result.alert_level in ("VERT", "ORANGE", "ROUGE")
 

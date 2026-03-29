@@ -42,6 +42,17 @@ class TestDistanceMap:
         # Cells on the far side of the wall should be unreachable
         assert dist[5, 5] == np.inf
 
+    def test_obstacle_mask_blocks_path(self) -> None:
+        """An obstacle mask should make cells impassable."""
+        geo = EvacuationGeodesic(dx_m=1.0)
+        density = np.zeros((10, 20))
+        obstacle = np.zeros((10, 20), dtype=bool)
+        obstacle[:, 10] = True  # wall at x=10
+        exits = [np.array([15.0, 5.0])]
+        dist = geo.compute_distance_map(density, exits, obstacle_mask=obstacle)
+        # Cells behind the wall should be unreachable
+        assert dist[5, 5] == np.inf
+
     def test_multiple_exits(self) -> None:
         """With two exits, each cell maps to the nearest exit."""
         geo = EvacuationGeodesic(dx_m=1.0)

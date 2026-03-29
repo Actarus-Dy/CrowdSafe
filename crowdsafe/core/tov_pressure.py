@@ -1,27 +1,33 @@
-"""TOVPressure -- crowd pressure profile along corridors (Janus §5.5).
+"""TOVPressure -- crowd force profile along corridors (Janus §5.5).
 
 Transposition of the Tolman-Oppenheimer-Volkoff equation from stellar
 structure to crowd dynamics.  In a star, pressure supports against
-gravitational collapse; in a crowd corridor, contact pressure accumulates
-as density increases toward a bottleneck.
+gravitational collapse; in a crowd corridor, cumulative contact force
+accumulates as density increases toward a bottleneck.
 
     Star  (§5.5):  dp/dr = -rho * g_eff * (1 + relativistic corrections)
-    Crowd:         dP/dl = -rho_crowd(l) * F_contact * width
+    Crowd:         dF/dl = rho_crowd(l) * F_contact_per_person * width
 
-where:
-    P(l)       = contact pressure along corridor [N/m]
-    rho(l)     = crowd density [pers/m²]
-    F_contact  = 100 N/pers (typical body contact force in dense crowd)
-    width      = corridor width [m]
+The integrated quantity F(l) is a **cumulative contact force** [N]:
+    F(l) = integral_0^l rho(s) * F_contact * width ds
 
-Alert thresholds (analogous to Schwarzschild §5.6):
-    P > 2700 N/m   -> WARNING (surveillance active)
-    P > 4450 N/m   -> DANGER (thoracic compression risk -> evacuate)
+This is NOT a pressure (N/m²). It represents the total force transmitted
+through the crowd cross-section at position l. To convert to pressure,
+divide by the corridor cross-section area: P = F / (width * body_depth).
+
+Alert thresholds (cumulative force, calibrated from crowd crush literature):
+    F > 2700 N  -> WARNING (compression noticeable, surveillance active)
+    F > 4450 N  -> DANGER (thoracic compression risk -> evacuate)
+
+These thresholds are derived from biomechanical estimates: a 4450 N force
+distributed across a 0.3m × 1.5m torso cross-section yields ~10 kPa,
+which approaches the threshold for respiratory compromise.
 
 Reference
 ---------
 Janus Civil C-14 CrowdSafe Technical Plan, Section 3.2.
-Fruin (1987), Pedestrian Planning and Design.
+Still, G.K. (2014). Introduction to Crowd Science.
+Fruin, J. (1993). The causes and prevention of crowd disasters.
 """
 
 from __future__ import annotations
@@ -33,22 +39,36 @@ import numpy.typing as npt
 
 __all__ = ["TOVPressure", "PressureProfile"]
 
-# Physiological pressure thresholds [N/m]
-WARNING_PRESSURE: float = 2700.0
-DANGER_PRESSURE: float = 4450.0
+# Cumulative force thresholds [N]
+WARNING_FORCE: float = 2700.0
+DANGER_FORCE: float = 4450.0
+
+# Backward compatibility aliases
+WARNING_PRESSURE = WARNING_FORCE
+DANGER_PRESSURE = DANGER_FORCE
 
 
 @dataclass(frozen=True, slots=True)
 class PressureProfile:
-    """Result of a TOV pressure computation along a corridor."""
+    """Result of a TOV force computation along a corridor."""
 
     l_m: npt.NDArray[np.float64]
-    pressure_N_m: npt.NDArray[np.float64]
-    P_max: float
+    cumulative_force_N: npt.NDArray[np.float64]
+    F_max: float
     alert_level: str
     location_max_m: float
     schwarzschild_ratio: float
     critical_exceeded: bool
+
+    @property
+    def pressure_N_m(self) -> npt.NDArray[np.float64]:
+        """Backward compatibility alias for cumulative_force_N."""
+        return self.cumulative_force_N
+
+    @property
+    def P_max(self) -> float:
+        """Backward compatibility alias for F_max."""
+        return self.F_max
 
 
 class TOVPressure:
@@ -102,28 +122,28 @@ class TOVPressure:
         rho_profile = np.asarray(rho_profile, dtype=np.float64)
         width_m = float(width_m)
 
-        # TOV §5.5: dP/dl = rho(l) * F_contact * width
-        # Pressure accumulates from entrance toward bottleneck.
-        dP_dl = rho_profile * self.F_contact * width_m
-        pressure = cumulative_trapezoid(dP_dl, l, initial=0.0)
+        # TOV §5.5: dF/dl = rho(l) * F_contact * width
+        # Cumulative force accumulates from entrance toward bottleneck.
+        dF_dl = rho_profile * self.F_contact * width_m
+        force = cumulative_trapezoid(dF_dl, l, initial=0.0)
 
-        P_max = float(np.max(np.abs(pressure)))
-        idx_max = int(np.argmax(np.abs(pressure)))
+        F_max = float(np.max(np.abs(force)))
+        idx_max = int(np.argmax(np.abs(force)))
 
         alert = "VERT"
-        if P_max > self.danger_threshold:
+        if F_max > self.danger_threshold:
             alert = "ROUGE"
-        elif P_max > self.warning_threshold:
+        elif F_max > self.warning_threshold:
             alert = "ORANGE"
 
         return PressureProfile(
             l_m=l,
-            pressure_N_m=pressure,
-            P_max=P_max,
+            cumulative_force_N=force,
+            F_max=F_max,
             alert_level=alert,
             location_max_m=float(l[idx_max]),
-            schwarzschild_ratio=P_max / self.danger_threshold,
-            critical_exceeded=P_max > self.danger_threshold,
+            schwarzschild_ratio=F_max / self.danger_threshold,
+            critical_exceeded=F_max > self.danger_threshold,
         )
 
     def compute_from_simulation(

@@ -69,6 +69,7 @@ class EvacuationGeodesic:
         self,
         density_map: npt.NDArray[np.float64],
         exits: list[npt.NDArray[np.float64]],
+        obstacle_mask: npt.NDArray[np.bool_] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Compute travel-time distance map from all exits via Dijkstra.
 
@@ -78,6 +79,8 @@ class EvacuationGeodesic:
             Crowd density at each grid cell [pers/m²].
         exits : list of ndarray, shape (2,)
             Exit positions in world coordinates [m].
+        obstacle_mask : ndarray, shape (ny, nx), dtype bool, optional
+            True where cells are impassable (walls, obstacles).
 
         Returns
         -------
@@ -89,19 +92,28 @@ class EvacuationGeodesic:
         ny, nx = density_map.shape
         dx = self.dx_m
 
-        # Walking speed map: v(rho) = v_max * max(0, 1 - rho/rho_c)
-        v_map = self.v_max * np.maximum(0.0, 1.0 - density_map / self.rho_critical)
+        # Weidmann (1993) walking speed: v(rho) = v_max * (1 - exp(-1.913*(1/rho - 1/rho_c)))
+        rho_safe = np.maximum(density_map, 0.01)
+        exponent = -1.913 * (1.0 / rho_safe - 1.0 / self.rho_critical)
+        v_map = self.v_max * np.maximum(0.0, 1.0 - np.exp(exponent))
+        # Zero speed where density >= critical
+        v_map[density_map >= self.rho_critical] = 0.0
+
         # Cost per cell: time to traverse = dx / v(rho)
         with np.errstate(divide="ignore"):
             cost_map = np.where(v_map > 0.01, dx / v_map, np.inf)
+
+        # Apply obstacle mask
+        if obstacle_mask is not None:
+            cost_map[obstacle_mask] = np.inf
 
         # Multi-source Dijkstra from all exits
         dist = np.full((ny, nx), np.inf, dtype=np.float64)
         heap: list[tuple[float, int, int]] = []
 
         for ex in exits:
-            ix = int(ex[0] / dx)
-            iy = int(ex[1] / dx)
+            ix = round(ex[0] / dx)
+            iy = round(ex[1] / dx)
             if 0 <= ix < nx and 0 <= iy < ny:
                 dist[iy, ix] = 0.0
                 heapq.heappush(heap, (0.0, ix, iy))
@@ -131,6 +143,7 @@ class EvacuationGeodesic:
         start: npt.NDArray[np.float64],
         density_map: npt.NDArray[np.float64],
         exits: list[npt.NDArray[np.float64]],
+        obstacle_mask: npt.NDArray[np.bool_] | None = None,
     ) -> EvacuationResult:
         """Find the optimal evacuation path from start to nearest exit.
 
@@ -142,6 +155,8 @@ class EvacuationGeodesic:
             Crowd density at each grid cell [pers/m²].
         exits : list of ndarray, shape (2,)
             Exit positions in world coordinates [m].
+        obstacle_mask : ndarray, shape (ny, nx), dtype bool, optional
+            True where cells are impassable (walls, obstacles).
 
         Returns
         -------
@@ -153,7 +168,7 @@ class EvacuationGeodesic:
         ny, nx = density_map.shape
         dx = self.dx_m
 
-        dist = self.compute_distance_map(density_map, exits)
+        dist = self.compute_distance_map(density_map, exits, obstacle_mask)
 
         # Trace path from start via gradient descent on distance map
         sx = min(max(int(start[0] / dx), 0), nx - 1)
@@ -165,16 +180,20 @@ class EvacuationGeodesic:
         neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1),
                      (-1, -1), (1, 1), (-1, 1), (1, -1)]
 
+        visited = set()
         for _ in range(10000):
+            visited.add((x, y))
             neighbor_cells = [
                 (x + dix, y + diy)
                 for dix, diy in neighbors
                 if 0 <= x + dix < nx and 0 <= y + diy < ny
+                and (x + dix, y + diy) not in visited
             ]
             if not neighbor_cells:
                 break
             best = min(neighbor_cells, key=lambda p: dist[p[1], p[0]])
-            if dist[best[1], best[0]] >= dist[y, x]:
+            # Stop if no progress (stuck) or reached exit
+            if dist[best[1], best[0]] > dist[y, x]:
                 break
             x, y = best
             path.append(np.array([x * dx, y * dx], dtype=np.float64))
