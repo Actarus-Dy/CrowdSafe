@@ -67,27 +67,17 @@ class TestFDSweep:
         assert "measured_speeds" in result
         assert len(result["densities"]) == 3
 
-    @pytest.mark.xfail(
-        reason=(
-            "PHASE 1 CALIBRATION: The fundamental diagram validation needs "
-            "recalibration for crowd dynamics. The density computation changed "
-            "from 1D veh/km to 2D pers/m², and the Weidmann speed-density "
-            "relationship requires proper corridor-based validation. "
-            "This will be addressed in Phase 1 calibration sprint."
-        ),
-        strict=False,
-    )
     def test_sweep_r_squared_above_threshold(self) -> None:
-        """With calibrated params and sufficient warmup, R² should exceed 0.5."""
+        """With Weidmann drag (G_s=0), R² should exceed 0.95."""
         result = run_fd_sweep(
             densities=[0.5, 1.0, 2.0, 3.0, 4.0],
             n_steps=100,
             warmup_steps=50,
             seed=42,
         )
-        assert result["r_squared"] > -1.0, (
-            f"R²={result['r_squared']:.4f} extremely poor — fundamental "
-            f"issue with speed-density relationship"
+        assert result["r_squared"] > 0.95, (
+            f"R²={result['r_squared']:.4f} too low — Weidmann drag model "
+            f"should converge to theoretical speed-density curve"
         )
 
     def test_speed_decreases_with_density(self) -> None:

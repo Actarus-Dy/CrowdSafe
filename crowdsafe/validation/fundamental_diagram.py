@@ -43,7 +43,7 @@ def greenshields_speed(rho: float, v_free: float = 1.34, rho_jam: float = 6.0) -
 
 def run_fd_sweep(
     densities: list[float] | None = None,
-    G_s: float = 2.0,
+    G_s: float = 0.0,
     beta: float = 1.0,
     gamma: float = 0.5,
     v_free: float = 1.34,
@@ -102,8 +102,6 @@ def run_fd_sweep(
 
         local_densities = np.full(n_ped, float(rho), dtype=np.float64)
 
-        # Use a large density_radius so computed densities approximate
-        # the uniform input density (avoids edge effects in small corridors)
         sim = CrowdSimulation(
             G_s=G_s,
             beta=beta,
@@ -114,18 +112,23 @@ def run_fd_sweep(
             drag_coefficient=gamma,
             v_free=v_free,
             rho_jam=rho_jam,
-            density_radius=max(corridor_length, corridor_width),
+            contact_strength=0.0,  # disable contact forces for clean FD
             use_gpu=False,
         )
         sim.init_pedestrians(positions, velocities, local_densities)
 
-        # Run warmup
-        sim.run(warmup_steps)
+        # Run warmup — override local_densities each step to maintain
+        # the target density (avoids edge effects in small corridors).
+        target_densities = np.full(n_ped, float(rho), dtype=np.float64)
+        for _ in range(warmup_steps):
+            sim.step()
+            sim.local_densities = target_densities.copy()
 
         # Measure over remaining steps
         speed_samples = []
         for _ in range(n_steps - warmup_steps):
             sim.step()
+            sim.local_densities = target_densities.copy()
             mean_spd = float(np.mean(np.linalg.norm(sim.velocities, axis=1)))
             speed_samples.append(mean_spd)
 

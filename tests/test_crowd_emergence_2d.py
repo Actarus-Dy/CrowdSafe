@@ -320,6 +320,42 @@ class TestDestinationForce:
             f"mean_vx={mean_vx:.3f}, expected positive"
         )
 
+    def test_evacuation_toward_exit(self) -> None:
+        """Pedestrians with destinations pointing toward an exit should
+        accumulate near the exit, demonstrating crowd flow."""
+        n = 40
+        rng = np.random.default_rng(55)
+        # Room: 20m x 10m, exit at (20, 5)
+        positions = np.column_stack([
+            rng.uniform(0, 18, n),
+            rng.uniform(0, 10, n),
+        ])
+        velocities = np.zeros((n, 2), dtype=np.float64)
+        densities = np.full(n, 0.2, dtype=np.float64)
+
+        sim = CrowdSimulation(dt=0.1, adaptive_dt=False)
+        sim.init_pedestrians(positions, velocities, densities)
+
+        # All pedestrians want to reach exit at (20, 5)
+        exit_pos = np.array([20.0, 5.0])
+        dirs = exit_pos - positions
+        sim.set_desired_directions(dirs)
+
+        sim.run(100)
+
+        # Mean x should have increased (moved toward exit)
+        mean_x_final = float(np.mean(sim.positions[:, 0]))
+        mean_x_init = float(np.mean(positions[:, 0]))
+
+        print(f"\n--- Evacuation Test ---")
+        print(f"  Initial mean x: {mean_x_init:.2f}")
+        print(f"  Final mean x:   {mean_x_final:.2f}")
+
+        assert mean_x_final > mean_x_init + 1.0, (
+            f"Pedestrians didn't move toward exit: "
+            f"init_x={mean_x_init:.2f}, final_x={mean_x_final:.2f}"
+        )
+
     def test_no_destination_no_effect(self) -> None:
         """Without set_desired_directions, no destination force is applied."""
         n = 10
@@ -342,4 +378,141 @@ class TestDestinationForce:
 
         np.testing.assert_allclose(v_no_dest, v_none, atol=1e-14,
             err_msg="Setting desired_directions=None should have no effect"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Wall forces keep pedestrians inside venue
+# ---------------------------------------------------------------------------
+class TestWallForces:
+    """Walls should confine pedestrians within the venue geometry."""
+
+    def test_wall_repels_pedestrians(self) -> None:
+        """Pedestrians moving toward a wall should be repelled."""
+        n = 10
+        # Pedestrians at x=1, moving toward wall at x=0
+        positions = np.column_stack([
+            np.full(n, 1.0),
+            np.linspace(0, 5, n),
+        ])
+        velocities = np.zeros((n, 2), dtype=np.float64)
+        velocities[:, 0] = -1.0  # moving toward wall
+        densities = np.full(n, 1.0, dtype=np.float64)
+
+        sim = CrowdSimulation(dt=0.05, adaptive_dt=False, drag_coefficient=0.0)
+        sim.init_pedestrians(positions, velocities, densities)
+        # Wall along x=0 from y=-1 to y=6
+        sim.set_walls(
+            p1=np.array([[0.0, -1.0]]),
+            p2=np.array([[0.0, 6.0]]),
+        )
+        sim.run(40)
+
+        # Pedestrians should not have crossed x=0
+        min_x = float(np.min(sim.positions[:, 0]))
+        print(f"\n--- Wall Repulsion Test ---")
+        print(f"  Min x after 40 steps: {min_x:.3f} m (wall at x=0)")
+
+        assert min_x > -0.1, (
+            f"Pedestrian crossed wall: min_x={min_x:.3f}, wall at x=0"
+        )
+
+    def test_corridor_walls_confine(self) -> None:
+        """Walls on both sides of a corridor should confine pedestrians."""
+        n = 15
+        rng = np.random.default_rng(88)
+        # Wide corridor: x in [0, 30], y in [0, 6]
+        positions = np.column_stack([
+            rng.uniform(2, 28, n),
+            rng.uniform(1.5, 4.5, n),
+        ])
+        velocities = np.column_stack([
+            rng.uniform(0.3, 0.8, n),
+            rng.uniform(-0.2, 0.2, n),
+        ])
+        densities = np.full(n, 0.5, dtype=np.float64)
+
+        sim = CrowdSimulation(
+            dt=0.01, adaptive_dt=False,
+            drag_coefficient=0.5, v_free=1.34,
+            G_s=1.0, contact_strength=500.0,
+        )
+        sim.init_pedestrians(positions, velocities, densities)
+        # Bottom wall (y=0) and top wall (y=6)
+        sim.set_walls(
+            p1=np.array([[0, 0], [0, 6]]),
+            p2=np.array([[30, 0], [30, 6]]),
+            strength=5000.0, decay=0.15,
+        )
+        sim.run(200)
+
+        y_min = float(np.min(sim.positions[:, 1]))
+        y_max = float(np.max(sim.positions[:, 1]))
+
+        print(f"\n--- Corridor Confinement Test ---")
+        print(f"  Y range: [{y_min:.2f}, {y_max:.2f}] (walls at y=0 and y=6)")
+
+        assert y_min > -0.5 and y_max < 6.5, (
+            f"Pedestrians escaped corridor: y in [{y_min:.2f}, {y_max:.2f}]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Arching at narrow exit (Helbing 2000 emergent phenomenon)
+# ---------------------------------------------------------------------------
+class TestArchingAtExit:
+    """At a narrow exit, pedestrians should form a semi-circular arch
+    pattern — the hallmark of crowd dynamics (Helbing 2000)."""
+
+    def test_density_higher_near_exit(self) -> None:
+        """With pedestrians moving toward a narrow exit, density should
+        be highest near the exit opening."""
+        n = 60
+        rng = np.random.default_rng(123)
+        # Room: 10m x 10m, exit is a 1.5m gap at x=10, y in [4.25, 5.75]
+        positions = np.column_stack([
+            rng.uniform(1, 8, n),
+            rng.uniform(1, 9, n),
+        ])
+        velocities = np.zeros((n, 2), dtype=np.float64)
+        densities = np.full(n, 0.6, dtype=np.float64)
+
+        sim = CrowdSimulation(dt=0.05, adaptive_dt=False)
+        sim.init_pedestrians(positions, velocities, densities)
+
+        # Walls: right wall with gap at y=[4.25, 5.75]
+        sim.set_walls(
+            p1=np.array([
+                [0, 0], [10, 0], [0, 0], [0, 10],     # left, bottom, left-top
+                [10, 0], [10, 5.75],                     # right wall below and above exit
+            ]),
+            p2=np.array([
+                [10, 0], [10, 4.25], [0, 10], [10, 10],
+                [10, 4.25], [10, 10],
+            ]),
+        )
+
+        # All pedestrians want to reach exit at (10, 5)
+        exit_pos = np.array([10.0, 5.0])
+        dirs = exit_pos - positions
+        sim.set_desired_directions(dirs)
+
+        sim.run(200)
+
+        # Measure density near exit (x > 7) vs far from exit (x < 4)
+        near_exit = sim.positions[:, 0] > 7.0
+        far_from_exit = sim.positions[:, 0] < 4.0
+
+        n_near = np.sum(near_exit)
+        n_far = np.sum(far_from_exit)
+
+        print(f"\n--- Arching at Exit Test ---")
+        print(f"  Pedestrians near exit (x>7): {n_near}")
+        print(f"  Pedestrians far from exit (x<4): {n_far}")
+        print(f"  Pedestrians that escaped (x>10): {np.sum(sim.positions[:, 0] > 10)}")
+
+        # More pedestrians should accumulate near the exit
+        assert n_near > n_far or n_near > 10, (
+            f"No crowd accumulation at exit: n_near={n_near}, n_far={n_far}. "
+            f"Expected more pedestrians near the narrow exit."
         )

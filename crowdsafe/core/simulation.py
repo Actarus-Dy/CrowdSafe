@@ -170,12 +170,19 @@ class CrowdSimulation:
         # Internal force cache (accelerations) for leapfrog continuity
         self._forces: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
 
-        # Static obstacles: walls and barriers.
-        # Convention: negative mass = repulsive wall (repels all pedestrians).
-        #             positive mass = attractive point (herding, curiosity).
-        # For walls/barriers, ALWAYS use negative masses.
+        # Static point obstacles (e.g. columns, barriers).
+        # Convention: negative mass = repulsive (repels all pedestrians).
+        #             positive mass = attractive (herding, curiosity).
         self._obstacle_positions: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
         self._obstacle_masses: npt.NDArray[np.float64] = np.empty(0, dtype=np.float64)
+
+        # Wall segments: line-based repulsive boundaries.
+        # Each wall is defined by two endpoints (p1, p2).
+        # Repulsive force: F = A_wall * exp(-d_perp / B_wall) * normal_away
+        self._wall_p1: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
+        self._wall_p2: npt.NDArray[np.float64] = np.empty((0, 2), dtype=np.float64)
+        self._wall_strength: float = 3000.0  # repulsion strength [N]
+        self._wall_range: float = 0.1  # decay length [m]
 
         # Bookkeeping
         self.step_count: int = 0
@@ -292,6 +299,10 @@ class CrowdSimulation:
         c._forces = self._forces.copy()
         c._obstacle_positions = self._obstacle_positions.copy()
         c._obstacle_masses = self._obstacle_masses.copy()
+        c._wall_p1 = self._wall_p1.copy()
+        c._wall_p2 = self._wall_p2.copy()
+        c._wall_strength = self._wall_strength
+        c._wall_range = self._wall_range
         c.step_count = self.step_count
         c._mean_speed = self._mean_speed
         if self.desired_directions is not None:
@@ -482,6 +493,42 @@ class CrowdSimulation:
         self._obstacle_masses = np.empty(0, dtype=np.float64)
 
     # ------------------------------------------------------------------
+    # Wall management (line-segment boundaries)
+    # ------------------------------------------------------------------
+    def set_walls(
+        self,
+        p1: np.ndarray,
+        p2: np.ndarray,
+        strength: float = 3000.0,
+        decay: float = 0.1,
+    ) -> None:
+        """Set wall segments as repulsive line boundaries.
+
+        Each wall is defined by two endpoints. Pedestrians within range
+        experience exponential repulsion perpendicular to the wall.
+
+        Parameters
+        ----------
+        p1 : array-like, shape (W, 2)
+            Start points of W wall segments.
+        p2 : array-like, shape (W, 2)
+            End points of W wall segments.
+        strength : float, default 3000.0
+            Repulsion strength in Newtons.
+        decay : float, default 0.1
+            Exponential decay length in meters.
+        """
+        self._wall_p1 = np.asarray(p1, dtype=np.float64).reshape(-1, 2)
+        self._wall_p2 = np.asarray(p2, dtype=np.float64).reshape(-1, 2)
+        self._wall_strength = float(strength)
+        self._wall_range = float(decay)
+
+    def clear_walls(self) -> None:
+        """Remove all walls from the simulation."""
+        self._wall_p1 = np.empty((0, 2), dtype=np.float64)
+        self._wall_p2 = np.empty((0, 2), dtype=np.float64)
+
+    # ------------------------------------------------------------------
     # Simulation step
     # ------------------------------------------------------------------
     def step(self) -> dict:
@@ -623,6 +670,63 @@ class CrowdSimulation:
         densities = counts / area
 
         return densities
+
+    def _compute_wall_forces(
+        self,
+        positions: npt.NDArray[np.float64],
+        abs_masses: npt.NDArray[np.float64],
+    ) -> npt.NDArray[np.float64]:
+        """Compute repulsive forces from wall segments.
+
+        For each pedestrian, finds the nearest point on each wall segment
+        and applies exponential repulsion: F = A * exp(-d / B) * normal.
+
+        Returns accelerations (N, 2).
+        """
+        n = len(positions)
+        wall_accel = np.zeros((n, 2), dtype=np.float64)
+        cutoff = 5 * self._wall_range + self._body_radius  # interaction range
+
+        for k in range(len(self._wall_p1)):
+            p1 = self._wall_p1[k]
+            p2 = self._wall_p2[k]
+            seg = p2 - p1
+            seg_len_sq = np.dot(seg, seg)
+            if seg_len_sq < 1e-12:
+                continue
+
+            # Project each pedestrian onto the wall segment
+            # t = clamp(dot(pos - p1, seg) / |seg|², 0, 1)
+            ap = positions - p1  # (N, 2)
+            t = np.clip(np.dot(ap, seg) / seg_len_sq, 0.0, 1.0)  # (N,)
+
+            # Nearest point on segment
+            nearest = p1 + t[:, np.newaxis] * seg  # (N, 2)
+            diff = positions - nearest  # (N, 2) away from wall
+            dist = np.linalg.norm(diff, axis=1)  # (N,)
+
+            # Only apply force within cutoff
+            active = dist < cutoff
+            if not np.any(active):
+                continue
+
+            dist_safe = np.maximum(dist[active], 1e-6)
+            normal = diff[active] / dist_safe[:, np.newaxis]
+
+            # Exponential repulsion
+            overlap = self._body_radius - dist[active]
+            force_mag = self._wall_strength * np.exp(
+                np.clip(overlap / self._wall_range, -10, 10)
+            )
+            force_vec = force_mag[:, np.newaxis] * normal
+
+            # Use fixed pedestrian mass (80 kg) for force-to-acceleration
+            # conversion. Wall forces are physical (Newtons), not gravitational.
+            pedestrian_mass_kg = 80.0
+            idx = np.where(active)[0]
+            wall_accel[idx] += force_vec / pedestrian_mass_kg
+
+        return wall_accel
 
     def _compute_contact_forces(
         self,
@@ -767,6 +871,10 @@ class CrowdSimulation:
         # This prevents interpenetration and models crush forces at high density.
         if self._contact_strength > 0 and n_pedestrians > 1:
             accelerations += self._compute_contact_forces(positions, abs_masses)
+
+        # --- Wall repulsion forces ---
+        if len(self._wall_p1) > 0:
+            accelerations += self._compute_wall_forces(positions, abs_masses)
 
         # --- Destination force (Helbing 1995 social force model) ---
         # F_dest = (v_desired - v_i) / tau
